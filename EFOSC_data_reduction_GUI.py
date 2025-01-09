@@ -22,13 +22,9 @@ class DataReductionGUI(tk.Tk):
                 "compdivision": 3,
                 "sciencedivision": 3,
                 "output_dict": "./output",
-                "outputfile_path": "./SOAR.csv",
+                "outputfile_path": "./EFOSC.csv",
                 "comparisonparams": [],
                 "debugimages": False,
-                "quad_fac": -7e-6,
-                "cube_fac": -1.5e-10,
-                "zoom_lvl": 25,
-                "n_ref": 3,
                 "c_cov": 100,
                 "s_cov": 0.05,
                 "q_cov": 2e-5,
@@ -42,7 +38,7 @@ class DataReductionGUI(tk.Tk):
             }
 
         super().__init__()
-        self.title("SOAR Data Reducer")
+        self.title("EFOSC Data Reducer")
         try:
             if os.name == "nt":
                 self.iconbitmap("favicon.ico")
@@ -56,7 +52,7 @@ class DataReductionGUI(tk.Tk):
         # scale_factor = 2.0
         # self.tk.call("tk", "scaling", scale_factor)
 
-        self.geometry("600x600+0+0")
+        self.geometry("650x200+250+250")
         # if os.name == 'nt':
         #     self.state('zoomed')
         # elif os.name == "posix":
@@ -66,46 +62,12 @@ class DataReductionGUI(tk.Tk):
         superframe = ttk.Frame(mainframe)
         # Shifted, not shifted
         frameframe = ttk.Frame(superframe)
-        flatframe = ttk.Frame(frameframe)
-        unshiftedflatframe = ttk.Frame(flatframe)
-        shiftedflatframe = ttk.Frame(flatframe)
-        unshiftedlabel = ttk.Label(unshiftedflatframe, text="Select the flatframes that were not offset:")
-        unshiftedlabel.pack()
-        unshiftedselectedfilelabel = tk.Label(unshiftedflatframe, text="", foreground="green")
-        unshiftedbtn = ttk.Button(unshiftedflatframe, text="Select Files", command=lambda: self.fileselection(unshiftedflatframe, unshiftedselectedfilelabel, "unshiftedflats"))
-        unshiftedbtn.pack()
-        unshiftedselectedfilelabel.pack()
-        shiftedlabel = ttk.Label(shiftedflatframe, text="Select the flatframes that were offset:")
-        shiftedlabel.pack()
-        shiftedselectedfilelabel = tk.Label(shiftedflatframe, text="", foreground="green")
-        shiftedbtn = ttk.Button(shiftedflatframe, text="Select Files", command=lambda: self.fileselection(shiftedflatframe, shiftedselectedfilelabel, "shiftedflats"))
-        shiftedbtn.pack()
-        shiftedselectedfilelabel.pack()
-
-        unshiftedflatframe.pack(padx=10, pady=10)
-        shiftedflatframe.pack(padx=10, pady=10)
-        flatframe.grid(row=0, column=0)
-        biasframe = ttk.Frame(frameframe)
-        biaslabel = ttk.Label(biasframe, text="Select the bias frames:")
-        biaslabel.pack()
-        biasselectedfilelabel = ttk.Label(biasframe, text="", foreground="green")
-        biasbtn = ttk.Button(biasframe, text="Select Files", command=lambda: self.fileselection(biasframe, biasselectedfilelabel, "biases"))
-        biasbtn.pack()
-        biasselectedfilelabel.pack()
-        biasframe.grid(row=1, column=0, padx=10, pady=10)
         scienceframe = ttk.Frame(frameframe)
         sciencelabel = ttk.Label(scienceframe, text="Select the science frames:")
         sciencelabel.pack()
         scienceselectedfilelabel = ttk.Label(scienceframe, text="", foreground="green")
         sciencebtn = ttk.Button(scienceframe, text="Select Files", command=lambda: self.fileselection(scienceframe, scienceselectedfilelabel, "scienceframes"))
         sciencebtn.pack()
-        scienceselectedfilelabel.pack()
-        complabel = ttk.Label(scienceframe, text="Select the comparison frames:")
-        complabel.pack()
-        compselectedfilelabel = ttk.Label(scienceframe, text="", foreground="green")
-        compbtn = ttk.Button(scienceframe, text="Select Files", command=lambda: self.fileselection(scienceframe, compselectedfilelabel, "comparisonframes"))
-        compbtn.pack()
-        compselectedfilelabel.pack()
         scienceframe.grid(row=2, column=0, padx=10, pady=10)
         frameframe.grid(row=0, column=0)
         controlframe = ttk.Frame(superframe)
@@ -127,45 +89,7 @@ class DataReductionGUI(tk.Tk):
         output_file.grid(row=0, column=1, sticky="e")
         outputfileframe.grid(row=1, column=0, sticky="w")
 
-        sampdivframe = ttk.Frame(controlframe)
-        sampdivlabel = ttk.Label(sampdivframe, text="Amount of samples ")
-        sampdivvar = tk.StringVar(value=self.variabledict["sampleamt"])
-        sampdiventry = ttk.Entry(sampdivframe, validate="focusout", textvariable=sampdivvar, width=10)
-        sampdivvar.trace_add("write", lambda a, b, c: self.set_entry("sampleamt", sampdivvar.get()))
-        sampdivlabel.grid(row=0, column=0, sticky="w")
-        sampdiventry.grid(row=0, column=1, sticky="e")
-        sampdivframe.grid(row=2, column=0, sticky="w")
-
-        accdivframe = ttk.Frame(controlframe)
-        accdivlabel = ttk.Label(accdivframe, text="Acceptance rate modifier ")
-        accdivvar = tk.StringVar(value=self.variabledict["accept_param"])
-        accdiventry = ttk.Entry(accdivframe, validate="focusout", textvariable=accdivvar, width=10)
-        accdivvar.trace_add("write", lambda a, b, c: self.set_entry("accept_param", accdivvar.get()))
-        accdivlabel.grid(row=0, column=0, sticky="w")
-        accdiventry.grid(row=0, column=1, sticky="e")
-        accdivframe.grid(row=3, column=0, sticky="w")
-
         divframe = ttk.Frame(controlframe)
-        compdivlabel = ttk.Label(divframe, text="Size of Comp Lamp chunks ")
-        compdivvar = tk.StringVar(value=self.variabledict["compdivision"])
-        compdiventry = ttk.Entry(divframe, validate="focusout", textvariable=compdivvar, width=5)
-        compdivvar.trace_add("write", lambda a, b, c: self.set_entry("compdivision", compdivvar.get()))
-        compdivlabel.grid(row=0, column=0, sticky="w")
-        compdiventry.grid(row=0, column=1, sticky="e")
-        sciencedivlabel = ttk.Label(divframe, text="Size of Science Frame chunks ")
-        sciencedivvar = tk.StringVar(value=self.variabledict["sciencedivision"])
-        sciencediventry = ttk.Entry(divframe, validate="focusout", textvariable=sciencedivvar, width=5)
-        sciencedivvar.trace_add("write", lambda a, b, c: self.set_entry("sciencedivision", sciencedivvar.get()))
-        sciencedivlabel.grid(row=1, column=0, sticky="w")
-        sciencediventry.grid(row=1, column=1, sticky="e")
-
-        coaddvar = tk.IntVar(value=0)
-        coaddcheck = ttk.Checkbutton(divframe, text="Coadd Science Chunks", variable=coaddvar)
-        coaddcheck.grid(row=2, column=0, columnspan=1)
-        # hgvar = tk.IntVar(value=0)
-        # coaddcheck = ttk.Checkbutton(divframe, text="Used HgAr lamp", variable=hgvar)
-        # coaddcheck.grid(row=3, column=0, columnspan=1)
-        # divframe.grid(row=3, column=0, sticky="w")
         plotvar = tk.IntVar(value=0)
         coaddcheck = ttk.Checkbutton(divframe, text="Show Debug Plots", variable=plotvar)
         coaddcheck.grid(row=3, column=0, columnspan=1)
@@ -173,20 +97,10 @@ class DataReductionGUI(tk.Tk):
 
         testbtn = ttk.Button(mainframe, text="Reduce Data", command=lambda:
         data_reduction(
-            self.variabledict["unshiftedflats"],
-            self.variabledict["shiftedflats"],
-            self.variabledict["biases"],
             self.variabledict["scienceframes"],
-            self.variabledict["comparisonframes"],
             self.variabledict["outputfile_path"],
             self.variabledict["output_dict"],
-            int(self.variabledict["sampleamt"]),
-            float(self.variabledict["accept_param"]),
-            int(self.variabledict["compdivision"]),
-            int(self.variabledict["sciencedivision"]),
-            coadd_chunk=True if coaddvar.get() == 1 else False,
             show_debug_plot=True if plotvar.get() == 1 else False,
-            # hglamp=True if hgvar.get() == 1 else False,
         ))
 
         controlframe.grid(row=0, column=1, sticky="ne", padx=10, pady=10)
