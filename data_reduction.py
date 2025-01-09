@@ -483,8 +483,8 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
                                   5 * np.max(data), len(data) / 2, 20, 0
                               ],
                               bounds=[
-                                  [0, len(data) * 1 / 4, 1, -np.inf],
-                                  [np.inf, len(data) * 3 / 4, np.inf, np.inf]
+                                  [0, len(data) * 1 / 6, 1, -np.inf],
+                                  [np.inf, len(data) * 5 / 6, np.inf, np.inf]
                               ],
                               maxfev=100000)
 
@@ -492,10 +492,10 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
         xcenters.append(int(i))
         ycenters.append(params[1])
 
-        # plt.plot(xarr, data)
-        # plt.plot(xarr, gaussian(xarr, *params))
-        # # plt.plot(xarr, gaussian(xarr, *[5*np.max(data), len(data) / 2, 20, 0]))
-        # plt.show()
+        plt.plot(xarr, data)
+        plt.plot(xarr, gaussian(xarr, *params))
+        # plt.plot(xarr, gaussian(xarr, *[5*np.max(data), len(data) / 2, 20, 0]))
+        plt.show()
 
     width = 3 * np.mean(width)
     params, _ = curve_fit(lowpoly,
@@ -834,12 +834,12 @@ def save_to_ascii(wl, flx, flx_std, mjd, trow,
     if addnoncoadd:
         if not os.path.isdir(dir + "_noncoadd"):
             os.mkdir(dir + "_noncoadd")
-        fname = trow["file"].replace(".fits", "_01.txt")
+        fname = trow["file"].replace(".Z", "").replace(".fits", "_01.txt")
         fname = dir + "_noncoadd/" + fname
     else:
         if not os.path.isdir(dir):
             os.mkdir(dir)
-        fname = trow["file"].replace(".fits", "_01.txt")
+        fname = trow["file"].replace(".Z", "").replace(".fits", "_01.txt")
         fname = dir + "/" + fname
 
     with open(fname.replace("_01.", "_mjd."), "w") as datefile:
