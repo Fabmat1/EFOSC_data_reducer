@@ -1,3 +1,4 @@
+import datetime
 import io
 import os
 import re
@@ -476,26 +477,32 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
         xarr = np.arange(len(data))
 
-        params, _ = curve_fit(gaussian,
-                              xarr,
-                              data,
-                              p0=[
-                                  5 * np.max(data), len(data) / 2, 20, 0
-                              ],
-                              bounds=[
-                                  [0, len(data) * 1 / 6, 1, -np.inf],
-                                  [np.inf, len(data) * 5 / 6, np.inf, np.inf]
-                              ],
-                              maxfev=100000)
+        xarr = xarr[int(0.1*len(xarr)):int(0.9*len(xarr))]
+        data = data[int(0.1*len(data)):int(0.9*len(data))]
+
+        try:
+            params, _ = curve_fit(gaussian,
+                                  xarr,
+                                  data,
+                                  p0=[
+                                      5 * np.max(data), xarr[np.argmax(data)], 10, np.median(data)
+                                  ],
+                                  bounds=[
+                                      [0, len(data) * 1 / 6, 1, -np.inf],
+                                      [np.inf, len(data) * 5 / 6, np.inf, np.inf]
+                                  ],
+                                  maxfev=100000)
+        except ValueError:
+            continue
 
         width.append(params[2])
         xcenters.append(int(i))
         ycenters.append(params[1])
 
-        plt.plot(xarr, data)
-        plt.plot(xarr, gaussian(xarr, *params))
-        # plt.plot(xarr, gaussian(xarr, *[5*np.max(data), len(data) / 2, 20, 0]))
-        plt.show()
+        # plt.plot(xarr, data)
+        # plt.plot(xarr, gaussian(xarr, *params))
+        # plt.plot(xarr, gaussian(xarr, *[5 * np.max(data), xarr[np.argmax(data)], 10, np.median(data)]))
+        # plt.show()
 
     width = 3 * np.mean(width)
     params, _ = curve_fit(lowpoly,
@@ -761,7 +768,7 @@ def get_star_info(file):
     if len(sinfo) == 0:
         # Define the coordinates
         coord = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg))
-
+        print(ra, dec)
         # Query Gaia DR3
         width = u.Quantity(10, u.arcsecond)
         result = Gaia.query_object(coordinate=coord, radius=width)
@@ -1012,12 +1019,23 @@ def data_reduction(science_list, output_csv_path, output_folder, show_debug_plot
         dir_path = os.path.dirname(sc_file)
         os.chdir(dir_path)
 
+        with open("lampfiles", "r") as lampfilesfile:
+            lampfiles = lampfilesfile.read().split("\n")
+
+        lamptimes = []
+        for file in lampfiles:
+            match = ".".join(file.split(".")[1:])
+            try:
+                iso_time = datetime.datetime.fromisoformat(match)
+                lamptimes.append(iso_time)
+            except Exception as e:
+                print(f"Error parsing ISO timestamp from TXT file {file}: {e}")
+
         flat_list = []
         bias_list = []
         comp_list = []
 
         for child in xml.getroot():
-            print(f"Child tag: {child.tag}, attributes: {child.attrib}")
             if child.tag == "mainFiles":
                 if child[0].attrib["name"] != sc_file.split("/")[-1].replace(".fits.Z", ""):
                     print("XML mismatch! Make sure that XML files are correctly named!")
@@ -1052,6 +1070,10 @@ def data_reduction(science_list, output_csv_path, output_folder, show_debug_plot
                                                                 for lamp_file in filegroup:
                                                                     comp_list.append(lamp_file.attrib["name"]+".fits.Z")
 
+
+        sc_time = ".".join(sc_file.split("/")[-1].replace(".fits.Z", "").split(".")[1:])
+        comp_list = [lampfiles[np.argmin(np.abs(np.array(lamptimes)-datetime.datetime.fromisoformat(sc_time)))]+".fits.Z"]
+        print(comp_list)
         print("Cropping images...")
         master_flat = create_master_flat(flat_list, 0)
         crop = detect_spectral_area(master_flat)
