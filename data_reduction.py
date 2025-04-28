@@ -763,6 +763,7 @@ def get_star_info(file):
                 width = u.Quantity(10*tries_to_find_star, u.arcsecond)
                 result = Gaia.query_object(coordinate=coord, radius=width)
                 star = result[0]
+                print(star.columns)
                 sinfo = {}
                 sinfo["name"] = f"Gaia DR3 {star['SOURCE_ID']}"
                 sinfo["source_id"] = star['SOURCE_ID']
@@ -783,7 +784,6 @@ def get_star_info(file):
                 sinfo["parallax_error"] = star['parallax_error'] if 'parallax_error' in star.columns else "N/A"
                 star_found = True
             except KeyError as e:
-                print(e)
                 print(f"Star not found in Gaia catalogues after {tries_to_find_star} iterations, trying with bigger radius...")
 
         if tries_to_find_star != 1:
