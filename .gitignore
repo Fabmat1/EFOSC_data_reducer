@@ -33,4 +33,5 @@ headercorrectro.py
 linefit.exe
 !Arlines.txt
 markov_stats.py
-./__pycache__
+./__pycache____pycache__/
+*.pyc

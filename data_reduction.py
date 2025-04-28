@@ -1,4 +1,5 @@
 import datetime
+
 import io
 import os
 import re
@@ -7,6 +8,7 @@ import shutil
 import subprocess
 from xml.etree import ElementTree as ET
 
+import warnings
 from astropy.time import Time
 from astropy.table import Table
 from astroquery.gaia import Gaia
@@ -26,10 +28,12 @@ from scipy.optimize import curve_fit
 import astropy.units as u
 import astropy.time as atime
 from scipy.signal import argrelextrema
+import matplotlib as mpl
 
 VIEW_DEBUG_PLOTS = False
 USE_MARKOV = True
 
+mpl.use("QtAgg")
 
 def splitname(name):
     allsplit = name.split("_")
@@ -82,72 +86,10 @@ def detect_spectral_area(flats_image):
 
     image_data = flats_image.astype(np.float64)[minumum_truncation:-minumum_truncation,
                  minumum_truncation:-minumum_truncation]
-
-    x_img = sobel(image_data, axis=0, mode="nearest")
-    y_img = sobel(image_data, axis=1, mode="nearest")
-
-    edge_detection = np.sqrt(x_img ** 2 + y_img ** 2)
-    edge_detection *= 1 / np.max(edge_detection)
-    edge_detection[edge_detection > 0.075] = 1
-    edge_detection[edge_detection < 1] = 0
-
-    edge_detection = (255 * edge_detection / edge_detection.max()).astype(np.uint8)
-
-    lines = cv2.HoughLinesP(edge_detection, 1, np.pi / 180, 50, None, 500, 0)
-
-    x_intercepts = []
-    y_intercepts = []
-    # Loop through the detected lines
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
-        cv2.line(edge_detection, (x1, y1), (x2, y2), (255,), 1)
-
-        if y2 == y1:
-            y_intercepts.append(y1)
-            continue
-
-        if x2 == x1:
-            x_intercepts.append(x1)
-            continue
-
-        m = (y2 - y1) / (x2 - x1)
-        y_intercept = y1 - m * x1
-        x_intercept = -y_intercept / m if m != 0 else None
-
-        if x_intercept is not None:
-            if 0 < x_intercept < edge_detection.shape[0]:
-                y_intercepts.append(x_intercept + minumum_truncation)
-
-        if 0 < y_intercept < edge_detection.shape[1]:
-            x_intercepts.append(y_intercept + minumum_truncation)
-
-    x_intercepts = np.array(x_intercepts)
-    y_intercepts = np.array(y_intercepts)
-
-    u_x = x_intercepts[x_intercepts > edge_detection.shape[1] / 2]
-    l_x = x_intercepts[x_intercepts < edge_detection.shape[1] / 2]
-
-    u_y = y_intercepts[y_intercepts > edge_detection.shape[0] / 2]
-    l_y = y_intercepts[y_intercepts < edge_detection.shape[0] / 2]
-
-    if len(u_x) == 0:
-        u_x = image_data.shape[1] - 5
-    else:
-        u_x = np.min(u_x) - 5
-    if len(l_x) == 0:
-        l_x = 5
-    else:
-        if l_x.max() > image_data.shape[1]/4:
-            l_x = 0
-        l_x = np.max(l_x) + 5
-    if len(u_y) == 0:
-        u_y = image_data.shape[0] - 5
-    else:
-        u_y = np.min(u_y) - 5
-    if len(l_y) == 0:
-        l_y = 5
-    else:
-        l_y = np.max(l_y) + 5
+    u_x = image_data.shape[1]
+    l_x = 0
+    u_y = image_data.shape[0] 
+    l_y = 0
 
     return [(l_x, u_x), (l_y, u_y)]
 
@@ -181,14 +123,14 @@ def merge_dicts(*dicts):
 
 
 def create_master_image(image_list, hdu_id, bounds, master_bias=None, master_continuum=None, return_header=False):
-    hdul = open_fits_compressed(image_list[0])
+    hdul = open_fits(image_list[0])
     image_data = crop_image(hdul[hdu_id].data, *bounds)
     headers = [dict(hdul[hdu_id].header)]
 
     master = np.zeros(image_data.shape, dtype=np.uint32)
     master += image_data
     for image in image_list[1:]:
-        hdul = open_fits_compressed(image)
+        hdul = open_fits(image)
         image = crop_image(hdul[hdu_id].data, *bounds)
         headers.append(dict(hdul[hdu_id].header))
         if master_bias is not None:
@@ -214,22 +156,19 @@ def create_master_image(image_list, hdu_id, bounds, master_bias=None, master_con
         return master, master_header
 
 
-def open_fits_compressed(file_name):
-    process = subprocess.Popen(['uncompress', '-c', file_name], stdout=subprocess.PIPE)
-    decompressed_data = process.stdout.read()
-
-    return fits.open(io.BytesIO(decompressed_data))
+def open_fits(file_name):
+    return fits.open(file_name)
 
 
 def create_master_flat(image_list, hdu_id, master_bias=None, bounds=None):
     if bounds is None:
-        image_data = open_fits_compressed(image_list[0])[hdu_id].data
+        image_data = open_fits(image_list[0])[hdu_id].data
     else:
-        image_data = crop_image(open_fits_compressed(image_list[0])[hdu_id].data, *bounds)
+        image_data = crop_image(open_fits(image_list[0])[hdu_id].data, *bounds)
     master = np.zeros(image_data.shape, dtype=np.float64)
     master += image_data
     for image in image_list[1:]:
-        image = open_fits_compressed(image)[hdu_id].data
+        image = open_fits(image)[hdu_id].data
         if bounds is not None:
             image = crop_image(image, *bounds)
         if master_bias is not None:
@@ -385,7 +324,7 @@ def get_montecarlo_results():
 
     data = np.concatenate(data_list)
 
-    threshold = np.percentile(data[:, -1], 0.1)
+    threshold = np.percentile(data[:, -1], 0.2)
     data = data[data[:, -1] < threshold]
 
     params = []
@@ -440,12 +379,12 @@ def get_montecarlo_results():
 def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mjd, location, ra, dec, comp_header
                      , compparams=None, hglamp=False):
 
-    central_wl = 4750
+    central_wl = (3450+5350)/2
 
     if os.name == "nt":
         ctypes.windll.shcore.SetProcessDpiAwareness(1)
-    image = np.rot90(open_fits_compressed(image_path)[0].data.astype(np.uint16))
-
+    image = open_fits(image_path)[1].data.astype(np.uint16)
+    image = np.rot90(image, k=3)
     image = crop_image(image, *crop)
 
     image[image < master_bias] = 0
@@ -454,6 +393,9 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     image = np.floor_divide(image.astype(np.float64), master_flat)
     image *= 65535 / image.max()
     image = image.astype(np.uint16)
+    
+    if "ALIb040098" in image_path:
+        image = crop_image(image, [0, 100000], [image.shape[0]-400-851, image.shape[0]-400])
 
     # plt.imshow(image, cmap="Greys_r", zorder=1, norm=Normalize(vmin=0, vmax=750))
     # plt.axis("off")
@@ -466,7 +408,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
     # 0.82 to 0.86 Angströms per pixel is usual for the EFOSC 930 grating
 
-    for i in np.linspace(25, image.shape[1] - 10, 31):
+    for i in np.linspace(75, image.shape[1] - 75, 31):
         if 1013 < i < 1017:  # Ignore bad column
             continue
         data = np.min(image[:, int(i - 5):int(i + 5)], axis=1)
@@ -492,7 +434,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
                                       [np.inf, len(data) * 5 / 6, np.inf, np.inf]
                                   ],
                                   maxfev=100000)
-        except ValueError:
+        except (ValueError, RuntimeError):
             continue
 
         width.append(params[2])
@@ -504,7 +446,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
         # plt.plot(xarr, gaussian(xarr, *[5 * np.max(data), xarr[np.argmax(data)], 10, np.median(data)]))
         # plt.show()
 
-    width = 3 * np.mean(width)
+    width = 3 * np.median(width)
     params, _ = curve_fit(lowpoly,
                           xcenters,
                           ycenters,
@@ -526,7 +468,14 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
         fig, axs = plt.subplots(2, 1, figsize=(4.8 * 16 / 9, 4.8))
         axs[0].plot(xspace, lowpoly(xspace, *params), zorder=1)
         axs[0].scatter(xcenters, ycenters, color="red", marker="x", zorder=5)
-        axs[1].imshow(image, cmap="Greys_r", norm=LogNorm(1, 1000))
+        
+        norm_l = np.percentile(image, 1)
+        norm_h = np.percentile(image, 99.9)
+        
+        if norm_l == 0:
+            norm_l = 1
+        
+        axs[1].imshow(image, cmap="Greys_r", norm=LogNorm(norm_l, norm_h))
         axs[1].plot(xspace, lowpoly(xspace, *params), color="lime", linewidth=0.5)
         axs[1].plot(xspace, lowpoly(xspace, *params) - SKYFLUXSEP, color="red", linestyle="--", linewidth=0.5)
         axs[1].plot(xspace, lowpoly(xspace, *params) + SKYFLUXSEP, color="red", linestyle="--", linewidth=0.5)
@@ -544,8 +493,8 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     uskyflx = np.array([get_flux(image64, p, lowpoly(p, *params) + SKYFLUXSEP, width) for p in pixel])
     lskyflx = np.array([get_flux(image64, p, lowpoly(p, *params) - SKYFLUXSEP, width) for p in pixel])
 
-    # testuskyflx = np.array([get_flux(image64, p, lowpoly(p, *params) + SKYFLUXSEP, 5*width) for p in pixel])
-    # testlskyflx = np.array([get_flux(image64, p, lowpoly(p, *params) - SKYFLUXSEP, 5*width) for p in pixel])
+    testuskyflx = np.array([get_flux(image64, p, lowpoly(p, *params) + SKYFLUXSEP, 5*width) for p in pixel])
+    testlskyflx = np.array([get_flux(image64, p, lowpoly(p, *params) - SKYFLUXSEP, 5*width) for p in pixel])
     # fractions = np.array([get_fluxfraction(image64, p, line(p, *params), width) for p in pixel])
     # uf = fractions[:, 0]
     # lf = fractions[:, 1]
@@ -557,7 +506,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     skyflx = np.minimum(uskyflx, lskyflx)
     flux -= skyflx
 
-    # testskyflux = (testlskyflx+testuskyflx)/2
+    testskyflux = (testlskyflx+testuskyflx)/2
 
     compflux_cont = minimum_filter(compflux, 10)
     compflux -= compflux_cont
@@ -565,7 +514,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     # kill obvious cosmics
     flux[flux > 3 * np.median(flux)] = np.nan
 
-    lines = np.genfromtxt("HgAr.txt", delimiter=",")[:, 1]
+    lines = np.genfromtxt("ThAr.txt", delimiter=",")[:, 1]
     # strengths = np.genfromtxt("HgAr.txt", delimiter=",")[:, 2]
     #
     # lines = lines[strengths > 100]
@@ -596,7 +545,7 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
                                                          extent / len(compspec_x), quadratic_ext, cubic_ext,
                                                          wl_stepsize, spacing_stepsize, quad_stepsize,
                                                          cub_stepsize, wl_cov, spacing_cov, quad_cov, cub_cov,
-                                                         1.05]), fmt="%.9e")
+                                                         1.1]), fmt="%.9e")
 
             if os.name == "nt":
                 process = subprocess.Popen(
@@ -625,11 +574,11 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
 
             return result
 
-        extent = 600
+        extent = 5350-3450
 
-        result = call_fitlines_markov(pixel, compflux, central_wl, extent, 5e-5, 2e-9,
+        result = call_fitlines_markov(pixel, compflux, central_wl, extent, 0, 0,
                                       0.1, 0.0001, 1.e-7, 1.e-9,
-                                      150., 0.1, 1.e-4, 1.e-7)
+                                      150., 0.2, 1.e-4, 1.e-7)
 
         # extremely good solver:
         # result = call_fitlines_markov(pixel, compflux, central_wl, extent, -7e-6, 0,
@@ -681,8 +630,43 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
         # plt.plot(final_wl_arr, lf)
         # plt.plot(final_wl_arr, lens*100)
         plt.show()
+        
+        linewidths = []
+        w_errs = []
+        ls = []
+        for b in lines: # lines[np.logical_and(lines > 3880, lines < 5000)]:
+            def mgauss_for_fit(x, amp, std):
+                return markov_gaussian(x, amp, b, std)
+            try:
+                mask = np.logical_and(final_wl_arr > b-5, final_wl_arr < b+5)
+                wl_window = final_wl_arr[mask]
+                flux_window = compflux[mask]
+                if len(wl_window) == 0:
+                    continue
+                params, errs = curve_fit(mgauss_for_fit, wl_window, flux_window, p0=[np.max(flux_window), 1])
+                errs = np.sqrt(np.diag(errs))
+                w_errs.append(errs[1])
+                linewidths.append(params[1])
+                ls.append(b)
+            except RuntimeError:
+                continue
+        ls = np.array(ls)
+        linewidths =np.array(linewidths)
+        w_errs = np.array(w_errs)
 
-    # np.savetxt("testoutput/"+image_path.split("/")[-1], np.stack([final_wl_arr, testskyflux], axis=-1))
+        mask = w_errs < np.percentile(w_errs, 80)
+        ls = ls[mask]
+        linewidths = linewidths[mask]
+        w_errs = w_errs[mask]
+
+        plt.scatter(ls, linewidths)
+        plt.errorbar(ls, linewidths, yerr=w_errs, fmt="None", ecolor='k', capsize=3)
+        plt.axhline(np.average(linewidths, weights=1/w_errs), color='k', linestyle='--')
+        print(np.average(linewidths, weights=1/w_errs)*2*np.sqrt(2*np.log(2)))
+        plt.tight_layout()
+        plt.show()
+
+    np.savetxt("testoutput/"+image_path.split("/")[-1], np.stack([final_wl_arr, testskyflux], axis=-1))
 
     sc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
     barycorr = sc.radial_velocity_correction(obstime=Time(mjd, format="mjd"), location=location)
@@ -754,9 +738,9 @@ def get_star_info(file):
         "e_Plx": "parallax_error",
     }
 
-    header = dict(open_fits_compressed(file)[0].header)
-    ra = header["RA"]
-    dec = header["DEC"]
+    header = dict(open_fits(file)[0].header)
+    ra = header["OBJRA"]
+    dec = header["OBJDEC"]
     sky_coord = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg))
     # Define the VizieR catalog ID
     catalog_id = "J/A+A/662/A40"
@@ -766,32 +750,44 @@ def get_star_info(file):
     sinfo = vizier.query_region(sky_coord, radius=30 * u.arcsec, catalog=catalog_id)
 
     if len(sinfo) == 0:
-        # Define the coordinates
-        coord = SkyCoord(ra=ra, dec=dec, unit=(u.deg, u.deg))
-        print(ra, dec)
-        # Query Gaia DR3
-        width = u.Quantity(10, u.arcsecond)
-        result = Gaia.query_object(coordinate=coord, radius=width)
-        star = result[0]
-        sinfo = {}
-        print(f"WARNING: Star from file {file} not found in hot subdwarf catalogues!")
-        sinfo["name"] = f"Gaia DR3 {star['SOURCE_ID']}"
-        sinfo["source_id"] = star['SOURCE_ID']
-        sinfo["ra"] = star['ra']
-        sinfo["dec"] = star['dec']
 
-        # Fill in other values if they exist, otherwise set to "N/A"
-        sinfo["file"] = file
-        sinfo["SPEC_CLASS"] = "unknown"
-        sinfo["bp_rp"] = star['bp_rp'] if 'bp_rp' in star.columns else "N/A"
-        sinfo["gmag"] = star['phot_g_mean_mag'] if 'phot_g_mean_mag' in star.columns else "N/A"
-        sinfo["nspec"] = 1
-        sinfo["pmra"] = star['pmra'] if 'pmra' in star.columns else "N/A"
-        sinfo["pmra_error"] = star['pmra_error'] if 'pmra_error' in star.columns else "N/A"
-        sinfo["pmdec"] = star['pmdec'] if 'pmdec' in star.columns else "N/A"
-        sinfo["pmdec_error"] = star['pmdec_error'] if 'pmdec_error' in star.columns else "N/A"
-        sinfo["parallax"] = star['parallax'] if 'parallax' in star.columns else "N/A"
-        sinfo["parallax_error"] = star['parallax_error'] if 'parallax_error' in star.columns else "N/A"
+        # Define the coordinates
+        coord = SkyCoord(ra=ra, dec=dec, unit=(u.hourangle, u.deg))
+        star_found = False
+        tries_to_find_star = 0
+
+        while not star_found:
+            tries_to_find_star += 1
+            try:
+                # Query Gaia DR3
+                width = u.Quantity(10*tries_to_find_star, u.arcsecond)
+                result = Gaia.query_object(coordinate=coord, radius=width)
+                star = result[0]
+                sinfo = {}
+                sinfo["name"] = f"Gaia DR3 {star['SOURCE_ID']}"
+                sinfo["source_id"] = star['SOURCE_ID']
+                sinfo["ra"] = star['ra']
+                sinfo["dec"] = star['dec']
+        
+                # Fill in other values if they exist, otherwise set to "N/A"
+                sinfo["file"] = file
+                sinfo["SPEC_CLASS"] = "unknown"
+                sinfo["bp_rp"] = star['bp_rp'] if 'bp_rp' in star.columns else "N/A"
+                sinfo["gmag"] = star['phot_g_mean_mag'] if 'phot_g_mean_mag' in star.columns else "N/A"
+                sinfo["nspec"] = 1
+                sinfo["pmra"] = star['pmra'] if 'pmra' in star.columns else "N/A"
+                sinfo["pmra_error"] = star['pmra_error'] if 'pmra_error' in star.columns else "N/A"
+                sinfo["pmdec"] = star['pmdec'] if 'pmdec' in star.columns else "N/A"
+                sinfo["pmdec_error"] = star['pmdec_error'] if 'pmdec_error' in star.columns else "N/A"
+                sinfo["parallax"] = star['parallax'] if 'parallax' in star.columns else "N/A"
+                sinfo["parallax_error"] = star['parallax_error'] if 'parallax_error' in star.columns else "N/A"
+                star_found = True
+            except KeyError:
+                print(f"Star not found in Gaia catalogues after {tries_to_find_star} iterations, trying with bigger radius...")
+
+        if tries_to_find_star != 1:
+            found_coordinates = SkyCoord(sinfo["ra"], sinfo["dec"], units=(u.deg, u.deg))
+            print(f"Star from file {file} was identified as {sinfo['name']} after {tries_to_find_star} iterations.\nDistance from header coordinates is {coord.separation(found_coordinates).arcsecond}\"")
 
     elif len(sinfo) > 0:
         if len(sinfo) == 1:
@@ -1000,12 +996,76 @@ def coadd_spectrum(wls, flxs, flx_stds):
     return global_wls, global_flxs, global_flx_stds
 
 
+
+def load_fits_files(science_frame, keyword, value):
+    """Generic function to load FITS files with a specific keyword-value pair."""
+    
+    sci_header = fits.getheader(science_frame)
+    sci_shape = fits.getdata(science_frame).shape
+    
+    directory = os.path.dirname(science_frame)
+    matching_files = []
+    
+    for file in os.listdir(directory):
+        if file.endswith(".fits"):
+            file_path = os.path.join(directory, file)
+            try:
+                header = fits.getheader(file_path)
+                data_shape = fits.getdata(file_path).shape
+                if keyword in header and value.lower() in header[keyword].lower() and data_shape == sci_shape:
+                    matching_files.append(file_path)
+            except Exception as e:
+                warnings.warn(f"Could not read {file}: {e}")
+    
+    if not matching_files:
+        warnings.warn(f"No matching {value} files found.")
+    
+    return matching_files
+
+def load_flat_files(science_frame):
+    """Load all FLAT frames with matching dimensions."""
+    return load_fits_files(science_frame, "IMAGETYP", "FLAT")
+
+def load_bias_files(science_frame):
+    """Load all BIAS frames with matching dimensions."""
+    return load_fits_files(science_frame, "IMAGETYP", "BIAS")
+
+def load_comp_files(science_frame):
+    """Load the closest ThAr calibration file in time to the science frame."""
+    
+    sci_header = fits.getheader(science_frame)
+    sci_time = datetime.datetime.strptime(sci_header["DATE-AVG"], "%Y-%m-%dT%H:%M:%S.%f")
+    
+    directory = os.path.dirname(science_frame)
+    closest_file = None
+    min_time_diff = float("inf")
+    
+    for file in os.listdir(directory):
+        if file.endswith(".fits"):
+            file_path = os.path.join(directory, file)
+            try:
+                header = fits.getheader(file_path)
+                if "OBJECT" in header and "ThAr" in header["OBJECT"]:
+                    obs_time = datetime.datetime.strptime(header["DATE-AVG"], "%Y-%m-%dT%H:%M:%S.%f")
+                    time_diff = abs((obs_time - sci_time).total_seconds())
+                    if time_diff < min_time_diff:
+                        min_time_diff = time_diff
+                        closest_file = file_path
+            except Exception as e:
+                warnings.warn(f"Could not read {file}: {e}")
+    
+    if closest_file is None:
+        warnings.warn("No matching ThAr calibration file found.")
+    
+    return closest_file
+
 def data_reduction(science_list, output_csv_path, output_folder, show_debug_plot=False):
     global VIEW_DEBUG_PLOTS
     if show_debug_plot:
         VIEW_DEBUG_PLOTS = True
     compparams = None
     print("Starting data reduction...")
+    
     if os.path.isfile("saved_solutions.csv"):
         previous_solutions = pd.read_csv("saved_solutions.csv")
     else:
@@ -1013,123 +1073,86 @@ def data_reduction(science_list, output_csv_path, output_folder, show_debug_plot
 
     for sc_file in science_list:
         print("Reducing", sc_file)
-        xml = ET.parse(sc_file.replace(".fits", "").replace(".Z", "")+"_raw2raw.xml")
-        original_dir = os.getcwd()
-
-        dir_path = os.path.dirname(sc_file)
-        os.chdir(dir_path)
-
-        with open("lampfiles", "r") as lampfilesfile:
-            lampfiles = lampfilesfile.read().split("\n")
-
-        lamptimes = []
-        for file in lampfiles:
-            match = ".".join(file.split(".")[1:])
-            try:
-                iso_time = datetime.datetime.fromisoformat(match)
-                lamptimes.append(iso_time)
-            except Exception as e:
-                print(f"Error parsing ISO timestamp from TXT file {file}: {e}")
-
-        flat_list = []
-        bias_list = []
-        comp_list = []
-
-        for child in xml.getroot():
-            if child.tag == "mainFiles":
-                if child[0].attrib["name"] != sc_file.split("/")[-1].replace(".fits.Z", ""):
-                    print("XML mismatch! Make sure that XML files are correctly named!")
-                    print(child[0].attrib["name"]+" != " + sc_file.split("/")[-1]).replace(".fits.Z", "")
-                    quit()
-            elif child.tag == "associatedFiles":
-                for association in child:
-                    if association.attrib["category"] == "BIAS":
-                        print("Gathering bias (dark) frames")
-                        for filegroup in association:
-                            if filegroup.tag == "mainFiles":
-                                for biasfile in filegroup:
-                                    bias_list.append(biasfile.attrib["name"]+".fits.Z")
-                    elif association.attrib["category"] == "SCREEN_FLAT_LSS":
-                        print("Gathering flat frames")
-                        for filegroup in association:
-                            if filegroup.tag == "mainFiles":
-                                for flatfile in filegroup:
-                                    flat_list.append(flatfile.attrib["name"]+".fits.Z")
-                    elif association.attrib["category"] == "STD_LSS":
-                        print("Gathering comp frames")
-                        for filegroup in association:
-                            if filegroup.tag == "associatedFiles":
-                                for association in filegroup:
-                                    if association.attrib["category"] == "SCREEN_FLAT_LSS":
-                                        for sf in association:
-                                            if sf.tag == "associatedFiles":
-                                                for subassociation in sf:
-                                                    if subassociation.attrib["category"] == "LAMP_MOS":
-                                                        for filegroup in subassociation:
-                                                            if filegroup.tag == "mainFiles":
-                                                                for lamp_file in filegroup:
-                                                                    comp_list.append(lamp_file.attrib["name"]+".fits.Z")
-
-
-        sc_time = ".".join(sc_file.split("/")[-1].replace(".fits.Z", "").split(".")[1:])
-        comp_list = [lampfiles[np.argmin(np.abs(np.array(lamptimes)-datetime.datetime.fromisoformat(sc_time)))]+".fits.Z"]
-        print(comp_list)
-        print("Cropping images...")
-        master_flat = create_master_flat(flat_list, 0)
-        crop = detect_spectral_area(master_flat)
-
-        if VIEW_DEBUG_PLOTS:
-            plt.imshow(master_flat, cmap="Greys_r", zorder=1)
-            plt.axvline(crop[0][0], color="lime", zorder=5)
-            plt.axvline(crop[0][1], color="lime", zorder=5)
-            plt.axhline(crop[1][0], color="lime", zorder=5)
-            plt.axhline(crop[1][1], color="lime", zorder=5)
-            plt.axis("off")
-            plt.tight_layout()
-            plt.show()
-
-        print("Creating Master Bias...")
-        master_bias, _ = create_master_image(bias_list, 0, crop)
-        if VIEW_DEBUG_PLOTS:
-            plt.imshow(master_bias, cmap="Greys_r", zorder=1)
-            plt.axis("off")
-            plt.tight_layout()
-            plt.show()
-
-        print("Creating Master Flat...")
-        master_flat, master_continuum = create_master_flat(flat_list, 0, master_bias=master_bias,
-                                                           bounds=crop)
-        if VIEW_DEBUG_PLOTS:
-            plt.imshow(master_flat, cmap="Greys_r", zorder=1)
-            plt.axis("off")
-            plt.tight_layout()
-            plt.show()
+            
+        flat_list = load_flat_files(sc_file)
+        bias_list = load_bias_files(sc_file)
+        
+        this_solution = previous_solutions[previous_solutions["file"] == sc_file]
+        if len(this_solution) != 0:
+            compparams = [this_solution["a"].iloc[0],
+                          this_solution["b"].iloc[0],
+                          this_solution["c"].iloc[0],
+                          this_solution["d"].iloc[0]]
+    
+        if len(flat_list) > 0:
+            crop = [(0, 1000000), (0, 1000000)]
+        else:
+            crop = [(0, 1000000), (0, 1000000)]
+                
+        if len(bias_list) > 0:
+            print("Creating Master Bias...")
+            master_bias, _ = create_master_image(bias_list, 1, crop)
+            if VIEW_DEBUG_PLOTS:
+                plt.imshow(master_bias, cmap="Greys_r", zorder=1)
+                plt.axis("off")
+                plt.tight_layout()
+                plt.show()
+        else: 
+            print("WARN: No biases found. Skipping master bias substraction.")
+            master_bias = np.zeros(fits.getdata(sc_file, ext=1).shape)
+                
+        if len(flat_list) > 0:
+            print("Creating Master Flat...")
+            master_flat, master_continuum = create_master_flat(flat_list, 1, master_bias=master_bias,
+                                                            bounds=crop)
+            
+            if VIEW_DEBUG_PLOTS:
+                plt.imshow(master_flat, cmap="Greys_r", zorder=1)
+                plt.axis("off")
+                plt.tight_layout()
+                plt.show()
+        else: 
+            print("WARN: No flats found. Skipping master flat correction.")
+            master_flat = np.ones(fits.getdata(sc_file, ext=1).shape)
 
         print("Extracting Spectra...")
         mjds = []
         flocs = []
         trows = []
-
-        master_comp, master_comp_header = create_master_image(comp_list, 0, crop, master_bias, return_header=True)
+        
+        comp_list = [load_comp_files(sc_file)]
+        print(comp_list)
+        
+        if len(bias_list) > 0:
+            master_comp, master_comp_header = create_master_image(comp_list, 1, crop, master_bias, return_header=True)
+        else:
+            master_comp, master_comp_header = create_master_image(comp_list, 1, crop, return_header=True)
 
         trow, mjd = get_star_info(sc_file)  # You probably need to write your own function. Trow needs to be a dict with "ra" and "dec" keys. Mjd is self-explanatory
         print(f'Working on GAIA DR3 {trow["source_id"]}...')
-
-        os.chdir(original_dir)
-        cerropachon = EarthLocation.of_site('La Silla Observatory (ESO)')  # Location of EFOSC
+        
+        notlocation = EarthLocation.of_site('Roque de los Muchachos')  # Location of NOT
         wl, flx, flx_std, compparams = extract_spectrum(
             sc_file,
-            np.rot90(master_bias),
-            np.rot90(master_flat),
-            [crop[1], [np.abs(crop[0][1]-master_bias.shape[0]), np.abs(crop[0][0]-master_bias.shape[0])]],
-            np.rot90(master_comp),
+            np.rot90(master_bias, k=3),
+            np.rot90(master_flat, k=3),
+            # lx ux ly uy
+            crop,
+            np.rot90(master_comp, k=3),
             mjd,
-            cerropachon,
+            notlocation,
             trow["ra"],
             trow["dec"],
             master_comp_header,
             compparams if compparams is not None else None)
-
+        
+        previous_solutions = pd.concat([previous_solutions, pd.DataFrame({"file": [sc_file],
+                                                                              "a": [compparams[0]],
+                                                                              "b": [compparams[1]],
+                                                                              "c": [compparams[2]],
+                                                                              "d": [compparams[3]]})])
+        
+        compparams=None
         ordered_cols = ["name", "source_id", "ra", "dec",
                         "file", "SPEC_CLASS", "bp_rp", "gmag", "nspec",
                         "pmra", "pmra_error", "pmdec", "pmdec_error", "parallax", "parallax_error"]
@@ -1141,150 +1164,3 @@ def data_reduction(science_list, output_csv_path, output_folder, show_debug_plot
         save_to_ascii(wl, flx, flx_std, mjd, trow, output_folder, output_csv_path)
 
     print("Finished!")
-
-
-# You should only need to modify
-if __name__ == "__main__":
-    print("Starting data reduction...")
-    catalogue = pd.read_csv("all_objects_withlamost.csv")
-    allfiles = sorted(os.listdir(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/EFOSC"))
-
-    print("Searching files...")
-    flat_list = []  # Flats
-    shifted_flat_list = []  # Flats created with a small camera tilt to get rid of the Littrow ghost
-    for file in allfiles:
-        if "quartz" in file and "test" not in file and "bias" not in file and "shifted" not in file:
-            flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/EFOSC" + "/" + file)
-        elif "quartz" in file and "test" not in file and "bias" not in file and "shifted" in file:
-            shifted_flat_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/EFOSC" + "/" + file)
-
-    bias_list = []
-    for file in allfiles:
-        if "bias" in file and "test" not in file:
-            bias_list.append(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/EFOSC" + "/" + file)
-
-    print("Cropping images...")
-    master_flat = create_master_flat(flat_list, shifted_flat_list, 0)
-    crop = detect_spectral_area(master_flat)
-
-    # plt.imshow(master_flat, cmap="Greys_r", zorder=1)
-    # plt.axvline(crop[0][0], color="lime", zorder=5)
-    # plt.axvline(crop[0][1], color="lime", zorder=5)
-    # plt.axhline(crop[1][0], color="lime", zorder=5)
-    # plt.axhline(crop[1][1], color="lime", zorder=5)
-    # plt.axis("off")
-    # plt.tight_layout()
-    # plt.show()
-
-    print("Creating Master Bias...")
-    master_bias, _ = create_master_image(bias_list, 0, crop)
-    # plt.imshow(master_bias, cmap="Greys_r", zorder=1)
-    # plt.axis("off")
-    # plt.tight_layout()
-    # plt.show()
-
-    print("Creating Master Flat...")
-    master_flat, master_continuum = create_master_flat(flat_list, shifted_flat_list, 0, master_bias=master_bias,
-                                                       bounds=crop)
-
-    EFOSCdf = pd.DataFrame({
-        "name": [],
-        "source_id": [],
-        "ra": [],
-        "dec": [],
-        "file": [],
-        "SPEC_CLASS": [],
-        "bp_rp": [],
-        "gmag": [],
-        "nspec": [],
-    })
-
-    print("Extracting Spectra...")
-    if os.path.isfile(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/EFOSC.csv"):
-        os.remove(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/EFOSC.csv")
-    for file in allfiles:
-        file = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_raw/EFOSC" + "/" + file
-        if "bias" not in file and "quartz" not in file and "test" not in file and "FeAr" not in file and ".txt" not in file and "RED" not in file:
-            compfiles = []  # Complamp list for this file
-
-            if os.name == "nt":
-                int_file_index = int(file.split("\\")[-1][:4])
-            else:
-                int_file_index = int(file.split("/")[-1][:4])
-
-            for i in range(6):
-                i += 1
-                searchind = int_file_index + i
-                file_index = str(int_file_index)
-
-                if len(file_index) == 3:
-                    file_index = "0" + file_index
-                if len(str(searchind)) == 3:
-                    searchind = "0" + str(searchind)
-
-                cfile = file.replace(file_index, str(searchind)).replace(".fits", "_FeAr.fits")
-                if os.path.isfile(cfile):
-                    compfiles.append(cfile)
-
-            master_comp, _ = create_master_image(compfiles, 0, crop, master_bias)
-
-            trow, mjd = get_star_info(
-                file)  # You probably need to write your own function. Trow needs to be a dict with "ra" and "dec" keys. Mjd is self-explanatory
-            print(f'Working on index {int_file_index}, GAIA DR3 {trow["source_id"]}...')
-            EFOSCdf = pd.concat([EFOSCdf, trow])
-
-            cerropachon = EarthLocation.of_site('Cerro Pachon')  # Location of EFOSC
-            wl, flx, flx_std = extract_spectrum(
-                file,
-                master_bias,
-                master_flat,
-                crop,
-                master_comp,
-                mjd,
-                cerropachon,
-                trow["ra"],
-                trow["dec"])
-            save_to_ascii(wl, flx, flx_std, mjd,
-                          trow)  # You probably need to write your own function for saving the wl and flx
-
-    # You can ignore everything below, this is only for Coadding spectra.
-    if len(COADD_SIDS) > 0:
-        directory = r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/EFOSC"
-        labeltable = pd.read_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/EFOSC.csv")
-
-        notincoaddtable = labeltable[~labeltable["source_id"].isin(COADD_SIDS)]
-        notincoaddtable.to_csv(r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/EFOSC.csv",
-                               index=False)
-
-        for sid in COADD_SIDS:
-            thissidlist = labeltable[labeltable["source_id"] == sid]
-            filelist = thissidlist["file"].to_numpy()
-            for_coadd = split_given_size(filelist, N_COADD)
-            for coadd_list in for_coadd:
-                n_file = coadd_list[0].replace(".fits", "_01.txt")
-                trow, _ = get_star_info(
-                    r"/home/fabian/Documents/PycharmProjects/auxillary/spectra_processed/EFOSC" + "/" + coadd_list[0])
-                mjds = []
-                for c in coadd_list:
-                    with open(directory + "/" + c.replace(".fits", "_mjd.txt")) as mjdfile:
-                        mjds.append(float(mjdfile.read()))  #
-                mean_mjd = np.mean(mjds)
-
-                allflx = []
-                allwl = []
-                all_flx_std = []
-                for f in coadd_list:
-                    wl, flx, t, flx_std = load_spectrum(directory + "/" + f.replace(".fits", "_01.txt"))
-                    allwl.append(wl)
-                    allflx.append(flx)
-                    all_flx_std.append(flx_std)
-
-                allwl = np.vstack(allwl)
-                allflx = np.vstack(allflx)
-                all_flx_std = np.vstack(all_flx_std)
-
-                allwl = np.mean(allwl, axis=0)
-                allflx = np.sum(allflx, axis=0) / len(allflx)
-                all_flx_std = np.sum(all_flx_std, axis=0) / len(all_flx_std)
-
-                save_to_ascii(allwl, allflx, all_flx_std, mean_mjd, trow)
