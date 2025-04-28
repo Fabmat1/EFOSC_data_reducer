@@ -506,8 +506,6 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
     skyflx = np.minimum(uskyflx, lskyflx)
     flux -= skyflx
 
-    testskyflux = (testlskyflx+testuskyflx)/2
-
     compflux_cont = minimum_filter(compflux, 10)
     compflux -= compflux_cont
 
@@ -665,8 +663,6 @@ def extract_spectrum(image_path, master_bias, master_flat, crop, master_comp, mj
         print(np.average(linewidths, weights=1/w_errs)*2*np.sqrt(2*np.log(2)))
         plt.tight_layout()
         plt.show()
-
-    np.savetxt("testoutput/"+image_path.split("/")[-1], np.stack([final_wl_arr, testskyflux], axis=-1))
 
     sc = SkyCoord(ra=ra * u.deg, dec=dec * u.deg)
     barycorr = sc.radial_velocity_correction(obstime=Time(mjd, format="mjd"), location=location)
