@@ -763,10 +763,9 @@ def get_star_info(file):
                 width = u.Quantity(10*tries_to_find_star, u.arcsecond)
                 result = Gaia.query_object(coordinate=coord, radius=width)
                 star = result[0]
-                print(star.columns)
                 sinfo = {}
-                sinfo["name"] = f"Gaia DR3 {star['SOURCE_ID']}"
-                sinfo["source_id"] = star['SOURCE_ID']
+                sinfo["name"] = f"Gaia DR3 {star['source_id']}"
+                sinfo["source_id"] = star['source_id']
                 sinfo["ra"] = star['ra']
                 sinfo["dec"] = star['dec']
         
