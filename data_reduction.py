@@ -782,7 +782,8 @@ def get_star_info(file):
                 sinfo["parallax"] = star['parallax'] if 'parallax' in star.columns else "N/A"
                 sinfo["parallax_error"] = star['parallax_error'] if 'parallax_error' in star.columns else "N/A"
                 star_found = True
-            except KeyError:
+            except KeyError as e:
+                print(e)
                 print(f"Star not found in Gaia catalogues after {tries_to_find_star} iterations, trying with bigger radius...")
 
         if tries_to_find_star != 1:
